@@ -10,17 +10,22 @@ const BASE_URL = 'https://iris-api-sandbox.circle.com/v2';
 /**
  * 1. Création du message CCTP (cross-chain USDC)
  */
-async function createCctpMessage({ amount, fromChain, toChain, toAddress, partner }) {
+async function createCctpMessage({ amount, fromChain, toChain, toAddress, partner, gasless }) {
   try {
+    const body = {
+      amount: amount.toString(), // ex: 1000000 pour 1 USDC
+      fromChain,
+      toChain,
+      toAddress,
+      partner
+    };
+    // Si gasless, ajoute le paramètre paymaster selon la doc Circle
+    if (gasless) {
+      body.paymaster = true; // ou selon la doc officielle (ex: paymaster: { type: 'circle' })
+    }
     const res = await axios.post(
       `${BASE_URL}/messages`,
-      {
-        amount: amount.toString(), // ex: 1000000 pour 1 USDC
-        fromChain,
-        toChain,
-        toAddress,
-        partner
-      },
+      body,
       {
         headers: {
           'Authorization': `Bearer ${CIRCLE_API_KEY}`,
