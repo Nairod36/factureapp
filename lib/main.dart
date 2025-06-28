@@ -1,17 +1,69 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:hive/hive.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+String? jwtToken;
+
+Future<bool> loginApi(String email, String password) async {
+  final res = await http.post(
+    Uri.parse('http://localhost:3000/api/login'), // Correction du chemin
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({'email': email, 'password': password}),
+  );
+  if (res.statusCode == 200) {
+    jwtToken = jsonDecode(res.body)['token'];
+    return true;
+  }
+  return false;
+}
+
+Future<bool> registerApi(String email, String password) async {
+  final res = await http.post(
+    Uri.parse('http://localhost:3000/api/register'), // Correction du chemin
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({'email': email, 'password': password}),
+  );
+  return res.statusCode == 200;
+}
+
+Future<bool> addInvoiceApi(String userEmail, String clientEmail, String description, String amount, {bool gasless = false}) async {
+  final res = await http.post(
+    Uri.parse('http://localhost:3000/api/invoices'), // Correction du chemin
+    headers: {
+      'Content-Type': 'application/json',
+      if (jwtToken != null) 'Authorization': 'Bearer $jwtToken',
+    },
+    body: jsonEncode({
+      'user_email': userEmail,
+      'client_email': clientEmail,
+      'description': description,
+      'amount': amount,
+      'gasless': gasless,
+    }),
+  );
+  return res.statusCode == 200 || res.statusCode == 201;
+}
+
+Future<List<Map<String, dynamic>>> getInvoicesApi(String userEmail) async {
+  final res = await http.get(
+    Uri.parse('http://localhost:3000/api/invoices?user_email=$userEmail'), // Correction du chemin
+    headers: {
+      if (jwtToken != null) 'Authorization': 'Bearer $jwtToken',
+    },
+  );
+  if (res.statusCode == 200) {
+    final decoded = jsonDecode(res.body);
+    if (decoded is List) {
+      return List<Map<String, dynamic>>.from(decoded);
+    }
+  }
+  return [];
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppDatabaseService.instance.init();
   runApp(AppWithAuth());
 }
 
@@ -27,7 +79,7 @@ class AuthService extends ChangeNotifier {
   bool get isLoggedIn => _userEmail != null;
 
   Future<bool> login(String email, String password) async {
-    final ok = await AppDatabaseService.instance.loginUser(email, password);
+    final ok = await loginApi(email, password);
     if (ok) {
       _userEmail = email;
       notifyListeners();
@@ -37,7 +89,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<bool> register(String email, String password) async {
-    final ok = await AppDatabaseService.instance.registerUser(email, password);
+    final ok = await registerApi(email, password);
     if (ok) {
       _userEmail = email;
       notifyListeners();
@@ -48,6 +100,7 @@ class AuthService extends ChangeNotifier {
 
   void logout() {
     _userEmail = null;
+    jwtToken = null;
     notifyListeners();
   }
 }
@@ -317,8 +370,8 @@ class _CreateInvoicePageState extends State<CreateInvoicePage> {
                     onPressed: () async {
                       if (_formKey.currentState!.validate()) {
                         _formKey.currentState!.save();
-                        await AppDatabaseService.instance.addInvoice(
-                          authService.userEmail!, email, description, amount);
+                        await addInvoiceApi(
+                          authService.userEmail!, email, description, amount, gasless: gasless);
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -363,7 +416,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
 
   Future<void> _loadInvoices() async {
     final authService = widget.authService;
-    final data = await AppDatabaseService.instance.getInvoices(authService.userEmail!);
+    final data = await getInvoicesApi(authService.userEmail!);
     setState(() {
       invoices = data;
       loading = false;
@@ -425,29 +478,6 @@ class InvoiceDetailPage extends StatelessWidget {
 
   InvoiceDetailPage({required this.email, required this.description, required this.amount, this.gasless = false});
 
-  void _sendEmail(BuildContext context) async {
-    final usdcAddress = '0x1234567890abcdef1234567890abcdef12345678';
-    final invoiceId = DateTime.now().millisecondsSinceEpoch.toString();
-    final qrData = {
-      'type': 'usdc_invoice',
-      'amount': amount,
-      'currency': 'USDC',
-      'merchant_address': usdcAddress,
-      'gasless': gasless,
-      'invoice_id': invoiceId,
-      'client_email': email,
-      'description': description,
-    };
-    final subject = Uri.encodeComponent('Facture USDC #$invoiceId');
-    final body = Uri.encodeComponent('Bonjour,\n\nVous avez reçu une facture à régler en USDC.\n\nMontant : $amount USDC\nDescription : $description\n\nPour payer, scannez ce QR code dans votre wallet compatible ou cliquez sur ce lien :\n$qrData\n\nLe choix de la blockchain se fait lors du paiement.\n\nAdresse du commerçant : $usdcAddress\n\nMerci !');
-    final mailto = Uri.parse('mailto:$email?subject=$subject&body=$body');
-    if (await canLaunchUrl(mailto)) {
-      await launchUrl(mailto);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Impossible d’ouvrir le client mail.')));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final usdcAddress = '0x1234567890abcdef1234567890abcdef12345678';
@@ -503,7 +533,7 @@ class InvoiceDetailPage extends StatelessWidget {
                         icon: Icons.email,
                         onPressed: () async {
                           final subject = Uri.encodeComponent('Facture USDC - $amount USDC');
-                          final body = Uri.encodeComponent('Bonjour,\n\nVoici votre facture :\n- Montant : $amount USDC\n- Description : $description\n- Paiement gasless : \\${gasless ? "Oui" : "Non"}\n\nPour payer, scannez le QR code ci-dessous dans votre app crypto compatible :\n$qrData\n\nMerci !');
+                          final body = Uri.encodeComponent('Bonjour,\n\nVoici votre facture :\n- Montant : $amount USDC\n- Description : $description\n- Paiement gasless : ${gasless ? "Oui" : "Non"}\n\nPour payer, scannez le QR code ci-dessous dans votre app crypto compatible :\n$qrData\n\nMerci !');
                           final mailto = 'mailto:$email?subject=$subject&body=$body';
                           if (await canLaunchUrl(Uri.parse(mailto))) {
                             await launchUrl(Uri.parse(mailto));
@@ -523,142 +553,6 @@ class InvoiceDetailPage extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-// Service de base de données pour utilisateurs et factures
-class DatabaseService {
-  static Database? _db;
-  static final DatabaseService instance = DatabaseService._();
-  DatabaseService._();
-
-  Future<Database> get database async {
-    if (_db != null) return _db!;
-    _db = await _initDB();
-    return _db!;
-  }
-
-  Future<Database> _initDB() async {
-    final documentsDirectory = await getApplicationDocumentsDirectory();
-    final path = p.join(documentsDirectory.path, 'factureapp.db');
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE,
-            password TEXT
-          );
-        ''');
-        await db.execute('''
-          CREATE TABLE invoices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            client_email TEXT,
-            description TEXT,
-            amount TEXT
-          );
-        ''');
-      },
-    );
-  }
-
-  // Utilisateur
-  Future<bool> registerUser(String email, String password) async {
-    final db = await database;
-    try {
-      await db.insert('users', {'email': email, 'password': password});
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<bool> loginUser(String email, String password) async {
-    final db = await database;
-    final res = await db.query('users', where: 'email = ? AND password = ?', whereArgs: [email, password]);
-    return res.isNotEmpty;
-  }
-
-  // Factures
-  Future<void> addInvoice(String userEmail, String clientEmail, String description, String amount) async {
-    final db = await database;
-    await db.insert('invoices', {
-      'user_email': userEmail,
-      'client_email': clientEmail,
-      'description': description,
-      'amount': amount,
-    });
-  }
-
-  Future<List<Map<String, dynamic>>> getInvoices(String userEmail) async {
-    final db = await database;
-    return await db.query('invoices', where: 'user_email = ?', whereArgs: [userEmail]);
-  }
-}
-
-// Service de base de données multiplateforme (mobile: sqflite, web: hive)
-class AppDatabaseService {
-  static final AppDatabaseService instance = AppDatabaseService._();
-  AppDatabaseService._();
-
-  Future<void> init() async {
-    if (kIsWeb) {
-      await Hive.initFlutter();
-      await Hive.openBox('users');
-      await Hive.openBox('invoices');
-    } else {
-      // sqflite déjà initialisé par DatabaseService
-    }
-  }
-
-  // Utilisateur
-  Future<bool> registerUser(String email, String password) async {
-    if (kIsWeb) {
-      final box = Hive.box('users');
-      if (box.containsKey(email)) return false;
-      await box.put(email, password);
-      return true;
-    } else {
-      return await DatabaseService.instance.registerUser(email, password);
-    }
-  }
-
-  Future<bool> loginUser(String email, String password) async {
-    if (kIsWeb) {
-      final box = Hive.box('users');
-      return box.get(email) == password;
-    } else {
-      return await DatabaseService.instance.loginUser(email, password);
-    }
-  }
-
-  // Factures
-  Future<void> addInvoice(String userEmail, String clientEmail, String description, String amount) async {
-    if (kIsWeb) {
-      final box = Hive.box('invoices');
-      final invoices = box.get(userEmail, defaultValue: <Map<String, dynamic>>[]).cast<Map<String, dynamic>>();
-      invoices.add({
-        'client_email': clientEmail,
-        'description': description,
-        'amount': amount,
-      });
-      await box.put(userEmail, invoices);
-    } else {
-      await DatabaseService.instance.addInvoice(userEmail, clientEmail, description, amount);
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> getInvoices(String userEmail) async {
-    if (kIsWeb) {
-      final box = Hive.box('invoices');
-      final invoices = box.get(userEmail, defaultValue: <Map<String, dynamic>>[]).cast<Map<String, dynamic>>();
-      return List<Map<String, dynamic>>.from(invoices);
-    } else {
-      return await DatabaseService.instance.getInvoices(userEmail);
-    }
   }
 }
 
