@@ -7,12 +7,19 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppDatabaseService.instance.init();
   runApp(AppWithAuth());
 }
+
+final Color kPrimaryColor = Color(0xFF005EA6); // Bleu PayPal
+final Color kAccentColor = Color(0xFF00B6F3); // Bleu clair accent
+final Color kBackgroundColor = Color(0xFFF6F8FB); // Gris très clair
+final Color kCardColor = Colors.white;
+final Color kTextColor = Color(0xFF222B45);
 
 class AuthService extends ChangeNotifier {
   String? _userEmail;
@@ -53,8 +60,36 @@ class AppWithAuth extends StatelessWidget {
     return MaterialApp(
       title: 'Facture USDC',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        fontFamily: 'Roboto',
+        primaryColor: kPrimaryColor,
+        scaffoldBackgroundColor: kBackgroundColor,
+        appBarTheme: AppBarTheme(
+          backgroundColor: kCardColor,
+          elevation: 2,
+          iconTheme: IconThemeData(color: kPrimaryColor),
+          titleTextStyle: TextStyle(color: kTextColor, fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+        cardColor: kCardColor,
+        colorScheme: ColorScheme.fromSwatch().copyWith(
+          primary: kPrimaryColor,
+          secondary: kAccentColor,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kPrimaryColor,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 3,
+            textStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+          contentPadding: EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+          labelStyle: TextStyle(color: kPrimaryColor),
+        ),
       ),
       home: AuthGate(authService: authService),
     );
@@ -235,9 +270,7 @@ class _CreateInvoicePageState extends State<CreateInvoicePage> {
   String email = '';
   String description = '';
   String amount = '';
-  String chain = 'Polygon';
   bool gasless = false;
-  final List<String> chains = ['Polygon', 'Ethereum', 'Base', 'Avalanche'];
 
   @override
   Widget build(BuildContext context) {
@@ -256,27 +289,20 @@ class _CreateInvoicePageState extends State<CreateInvoicePage> {
                 children: [
                   MainTextField(
                     label: 'Email du destinataire',
+                    icon: Icons.email,
                     onSaved: (val) => email = val ?? '',
                     validator: (val) => val != null && val.contains('@') ? null : 'Email invalide',
                   ),
                   MainTextField(
                     label: 'Description',
+                    icon: Icons.description,
                     onSaved: (val) => description = val ?? '',
                   ),
                   MainTextField(
                     label: 'Montant (USDC)',
+                    icon: Icons.attach_money,
                     onSaved: (val) => amount = val ?? '',
                     validator: (val) => val != null && double.tryParse(val) != null ? null : 'Montant invalide',
-                  ),
-                  SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    value: chain,
-                    items: chains.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                    onChanged: (val) => setState(() => chain = val ?? 'Polygon'),
-                    decoration: InputDecoration(
-                      labelText: 'Chaîne cible',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
                   ),
                   SizedBox(height: 12),
                   CheckboxListTile(
@@ -300,7 +326,6 @@ class _CreateInvoicePageState extends State<CreateInvoicePage> {
                               email: email,
                               description: description,
                               amount: amount,
-                              chain: chain,
                               gasless: gasless,
                             ),
                           ),
@@ -364,10 +389,13 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 2,
                         child: ListTile(
-                          leading: Icon(Icons.receipt, color: Colors.blue),
-                          title: Text('${invoice['description']} - ${invoice['amount']} USDC', style: TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text(invoice['client_email'] ?? ''),
-                          trailing: Icon(Icons.arrow_forward_ios, size: 16),
+                          leading: CircleAvatar(
+                            backgroundColor: kAccentColor.withOpacity(0.15),
+                            child: Icon(Icons.receipt, color: kPrimaryColor),
+                          ),
+                          title: Text('${invoice['description']} - ${invoice['amount']} USDC', style: TextStyle(fontWeight: FontWeight.bold, color: kTextColor)),
+                          subtitle: Text(invoice['client_email'] ?? '', style: TextStyle(color: Colors.grey[700])),
+                          trailing: Icon(Icons.arrow_forward_ios, size: 16, color: kPrimaryColor),
                           onTap: () {
                             Navigator.push(
                               context,
@@ -393,10 +421,32 @@ class InvoiceDetailPage extends StatelessWidget {
   final String email;
   final String description;
   final String amount;
-  final String chain;
   final bool gasless;
 
-  InvoiceDetailPage({required this.email, required this.description, required this.amount, this.chain = 'Polygon', this.gasless = false});
+  InvoiceDetailPage({required this.email, required this.description, required this.amount, this.gasless = false});
+
+  void _sendEmail(BuildContext context) async {
+    final usdcAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    final invoiceId = DateTime.now().millisecondsSinceEpoch.toString();
+    final qrData = {
+      'type': 'usdc_invoice',
+      'amount': amount,
+      'currency': 'USDC',
+      'merchant_address': usdcAddress,
+      'gasless': gasless,
+      'invoice_id': invoiceId,
+      'client_email': email,
+      'description': description,
+    };
+    final subject = Uri.encodeComponent('Facture USDC #$invoiceId');
+    final body = Uri.encodeComponent('Bonjour,\n\nVous avez reçu une facture à régler en USDC.\n\nMontant : $amount USDC\nDescription : $description\n\nPour payer, scannez ce QR code dans votre wallet compatible ou cliquez sur ce lien :\n$qrData\n\nLe choix de la blockchain se fait lors du paiement.\n\nAdresse du commerçant : $usdcAddress\n\nMerci !');
+    final mailto = Uri.parse('mailto:$email?subject=$subject&body=$body');
+    if (await canLaunchUrl(mailto)) {
+      await launchUrl(mailto);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Impossible d’ouvrir le client mail.')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -406,7 +456,6 @@ class InvoiceDetailPage extends StatelessWidget {
       'type': 'usdc_invoice',
       'amount': amount,
       'currency': 'USDC',
-      'chain': chain,
       'merchant_address': usdcAddress,
       'gasless': gasless,
       'invoice_id': invoiceId,
@@ -425,24 +474,46 @@ class InvoiceDetailPage extends StatelessWidget {
               Text('Destinataire : $email', style: TextStyle(fontSize: 16)),
               Text('Description : $description', style: TextStyle(fontSize: 16)),
               Text('Montant : $amount USDC', style: TextStyle(fontSize: 16)),
-              Text('Chaîne : $chain', style: TextStyle(fontSize: 16)),
               Text('Gasless : ${gasless ? "Oui" : "Non"}', style: TextStyle(fontSize: 16)),
               SizedBox(height: 30),
               Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 6,
+                margin: EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                color: kCardColor,
+                shadowColor: kAccentColor.withOpacity(0.12),
                 child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.all(24.0),
                   child: Column(
                     children: [
-                      Text('Payer en crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                      SizedBox(height: 10),
+                      Text('Payer en crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: kPrimaryColor)),
+                      SizedBox(height: 16),
                       QrImageView(
                         data: qrData.toString(),
-                        size: 200,
+                        size: 220,
+                        backgroundColor: Colors.white,
                       ),
+                      SizedBox(height: 18),
+                      SelectableText('Adresse USDC :\n$usdcAddress', textAlign: TextAlign.center, style: TextStyle(color: kTextColor, fontWeight: FontWeight.w500)),
                       SizedBox(height: 10),
-                      SelectableText('Adresse USDC :\n$usdcAddress', textAlign: TextAlign.center),
+                      Text('Le choix de la blockchain se fera lors du paiement par l’acheteur.', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                      SizedBox(height: 24),
+                      MainButton(
+                        label: 'Envoyer la facture par mail',
+                        icon: Icons.email,
+                        onPressed: () async {
+                          final subject = Uri.encodeComponent('Facture USDC - $amount USDC');
+                          final body = Uri.encodeComponent('Bonjour,\n\nVoici votre facture :\n- Montant : $amount USDC\n- Description : $description\n- Paiement gasless : \\${gasless ? "Oui" : "Non"}\n\nPour payer, scannez le QR code ci-dessous dans votre app crypto compatible :\n$qrData\n\nMerci !');
+                          final mailto = 'mailto:$email?subject=$subject&body=$body';
+                          if (await canLaunchUrl(Uri.parse(mailto))) {
+                            await launchUrl(Uri.parse(mailto));
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Impossible d’ouvrir le client mail.')),
+                            );
+                          }
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -601,15 +672,25 @@ class MainButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton.icon(
-        icon: icon != null ? Icon(icon) : SizedBox.shrink(),
-        label: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14.0),
-          child: Text(label, style: TextStyle(fontSize: 18)),
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kPrimaryColor,
+          foregroundColor: Colors.white,
+          elevation: 4,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shadowColor: kAccentColor.withOpacity(0.2),
+          padding: EdgeInsets.symmetric(vertical: 18),
         ),
         onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 22, color: Colors.white),
+              SizedBox(width: 10),
+            ],
+            Text(label, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
         ),
       ),
     );
@@ -622,7 +703,8 @@ class MainTextField extends StatelessWidget {
   final bool obscureText;
   final FormFieldSetter<String>? onSaved;
   final FormFieldValidator<String>? validator;
-  const MainTextField({required this.label, this.obscureText = false, this.onSaved, this.validator, super.key});
+  final IconData? icon;
+  const MainTextField({required this.label, this.obscureText = false, this.onSaved, this.validator, this.icon, super.key});
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -630,7 +712,7 @@ class MainTextField extends StatelessWidget {
       child: TextFormField(
         decoration: InputDecoration(
           labelText: label,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          prefixIcon: icon != null ? Icon(icon, color: kPrimaryColor) : null,
         ),
         obscureText: obscureText,
         onSaved: onSaved,
