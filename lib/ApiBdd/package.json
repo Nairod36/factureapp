@@ -1,9 +1,15 @@
 {
-  "name": "bdd",
-  "version": "0.0.0",
-  "private": true,
+  "name": "facture-usdc-api",
+  "version": "1.0.0",
+  "description": "API Node.js pour l'application Facture USDC avec smart contracts",
+  "main": "app.js",
   "scripts": {
-    "start": "node ./bin/www"
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Tests à implémenter\" && exit 0",
+    "check-env": "node check-env.js",
+    "prestart": "npm run check-env",
+    "poststart": "node -e \"console.log('✅ Serveur démarré avec succès!')\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -14,6 +20,13 @@
     "express": "~4.16.1",
     "jsonwebtoken": "^9.0.2",
     "morgan": "~1.9.1",
-    "sqlite3": "^5.1.7"
-  }
+    "sqlite3": "^5.1.7",
+    "ethers": "^6.7.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": ["ethereum", "usdc", "invoices", "api", "smart-contracts"],
+  "author": "Votre nom",
+  "license": "MIT"
 }

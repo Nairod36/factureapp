@@ -4,9 +4,11 @@
   "description": "Smart contracts pour l'application Facture USDC",
   "main": "web3_service.js",
   "scripts": {
-    "deploy": "node deploy/deploy.js",
+    "compile": "node compile.js",
+    "deploy": "npm run compile && node deploy/deploy.js",
     "test": "mocha test/*.test.js",
-    "compile": "solc --abi --bin Invoice.sol -o build/"
+    "deploy:sepolia": "npm run compile && NETWORK=sepolia node deploy/deploy.js",
+    "deploy:polygon": "npm run compile && NETWORK=polygon node deploy/deploy.js"
   },
   "dependencies": {
     "ethers": "^6.7.1",
