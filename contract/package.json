@@ -1,0 +1,23 @@
+{
+  "name": "facture-usdc-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts pour l'application Facture USDC",
+  "main": "web3_service.js",
+  "scripts": {
+    "deploy": "node deploy/deploy.js",
+    "test": "mocha test/*.test.js",
+    "compile": "solc --abi --bin Invoice.sol -o build/"
+  },
+  "dependencies": {
+    "ethers": "^6.7.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "chai": "^4.3.7",
+    "solc": "^0.8.20"
+  },
+  "keywords": ["ethereum", "solidity", "usdc", "invoices", "smart-contracts"],
+  "author": "Votre nom",
+  "license": "MIT"
+}

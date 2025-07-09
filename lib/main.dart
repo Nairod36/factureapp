@@ -62,28 +62,33 @@ Future<List<Map<String, dynamic>>> getInvoicesApi(String userEmail) async {
   return [];
 }
 
-Future<Map<String, dynamic>?> createCctpMessageApi({
+Future<Map<String, dynamic>?> createInvoiceOnChainApi({
+  required String clientAddress,
   required String amount,
-  required String fromChain,
-  required String toChain,
-  required String toAddress,
-  required String partner,
-  bool gasless = false,
 }) async {
   final res = await http.post(
-    Uri.parse('http://localhost:3000/api/cctp'),
+    Uri.parse('http://localhost:3000/api/contract/create'),
     headers: {
       'Content-Type': 'application/json',
       if (jwtToken != null) 'Authorization': 'Bearer $jwtToken',
     },
     body: jsonEncode({
+      'clientAddress': clientAddress,
       'amount': amount,
-      'fromChain': fromChain,
-      'toChain': toChain,
-      'toAddress': toAddress,
-      'partner': partner,
-      'gasless': gasless,
     }),
+  );
+  if (res.statusCode == 200) {
+    return jsonDecode(res.body);
+  }
+  return null;
+}
+
+Future<Map<String, dynamic>?> getInvoiceStatusApi(String invoiceId) async {
+  final res = await http.get(
+    Uri.parse('http://localhost:3000/api/contract/status/$invoiceId'),
+    headers: {
+      if (jwtToken != null) 'Authorization': 'Bearer $jwtToken',
+    },
   );
   if (res.statusCode == 200) {
     return jsonDecode(res.body);
