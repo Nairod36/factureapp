@@ -4,6 +4,12 @@ class AppConfig {
   // Configuration API
   static const String apiBaseUrl = 'http://localhost:3000';
   
+  // Configuration Reown AppKit
+  static const String projectId = 'your-project-id-here'; // À remplacer par votre projet ID
+  static const String appDescription = 'Application de facturation USDC';
+  static const String appUrl = 'https://factureapp.com';
+  static const List<String> appIcons = ['https://factureapp.com/icon.png'];
+  
   // Configuration utilisateur (à adapter selon l'authentification)
   static String userAddress = '0x742d35Cc6635C0532925a3b8D56c9E6eA22D9c08';
   static String? userName;
