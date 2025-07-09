@@ -1,4 +1,52 @@
-# Facture USDC – Application Flutter & API Node.js (Circle CCTP)
+# Facture USDC – Application Flutter &## Fonctionnalités principales
+- Authentificatio### 1. Backend Node.js
+```bash
+cd- Modifiez l| POS| POST    | /api/invoices | Cré- Stockez la clé privée dans `.env` (jamais dans le code)
+- Utilisez HTTPS en production
+- Testez d'abord sur testnet (Sepolia, Mumbai, etc.)
+- Vérifiez les allowances USDC avant les paiements
+- Validez les adresses et montants côté contrate facture (on-chain) |
+| GET     | /api/invoices/:id | Détail d'une facture |
+| PUT     | /api/invoices/:id | Modifie une facture |
+| DELETE  | /api/invoices/:id | Supprime une facture |
+| POST    | /api/contract/create | Crée une facture sur le smart contract |
+| GET     | /api/contract/status/:id | Vérifie le statut de paiement on-chain | /api/invoices | Crée une facture (on-chain) |
+| GET     | /api/invoices/:id | Détail d'une facture |
+| PUT     | /api/invoices/:id | Modifie une facture |
+| DELETE  | /api/invoices/:id | Supprime une facture |
+| POST    | /api/contract/create | Crée une facture sur le smart contract |
+| GET     | /api/contract/status/:id | Vérifie le statut de paiement on-chain |PI dans `main.dart` si besoin (pour mobile, utilisez l'IP du backend)
+- Assurez-vous d'avoir un wallet connecté (MetaMask, etc.) pour les paiements blockchainlib/ApiBdd
+npm install
+# Créez un fichier .env avec :
+# RPC_URL=https://rpc.ankr.com/eth (ou votre RPC)
+# PRIVATE_KEY=VOTRE_CLE_PRIVEE_DEPLOIEMENT
+# CONTRACT_ADDRESS=ADRESSE_DU_CONTRAT_DEPLOYE
+node app.js
+```
+- Serveur sur `http://localhost:3000`
+- Variables d'environnement :
+  - `RPC_URL` (RPC Ethereum/Polygon pour interagir avec les contrats)
+  - `PRIVATE_KEY` (clé privée pour les transactions, optionnel si lecture seule)
+  - `CONTRACT_ADDRESS` (adresse du contrat Invoice déployé)
+  - `PORT` (optionnel, défaut 3000)(JWT, API Node.js, SQLite)
+- Création, visualisation et gestion de factures USDC via smart contracts
+- Génération de QR code pour paiement crypto
+- Paiement direct via smart contracts (approve/transferFrom USDC)
+- Interface web/mobile responsive avec UX professionnelle
+- Gestion on-chain des factures (création, paiement, statut)ontracts
+
+<p align="center">
+  <br><br>
+  <img src="https://img.shields.io/badge/Flutter-Ready-blue?logo=flutter"/>
+  <img src="https://img.shields.io/badge/Node.js-API-green?logo=node.js"/>
+  <img src="https://img.shields.io/badge/Solidity-Smart%20Contracts-orange?logo=ethereum"/>
+  <img src="https://img.shields.io/badge/SQLite-DB-lightgrey?logo=sqlite"/>
+</p>
+
+---
+
+**Facture USDC** est une solution complète pour commerçants permettant de générer, visualiser et gérer des factures USDC via des smart contracts, avec gestion d'utilisateurs, QR code, stockage sécurisé et UX professionnelle. – Application Flutter & API Node.js (Circle CCTP)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/CircleFin/brand-assets/main/circle-logo.svg" alt="Circle" width="120"/>
@@ -49,11 +97,17 @@ flowchart TD
     subgraph Backend[Node.js/Express]
       G[API REST]
       H[SQLite DB]
-      I[Circle CCTP Service]
+      I[Web3 Service]
       G --> H
       G --> I
     end
+    subgraph Blockchain[Smart Contracts]
+      J[Invoice Contract]
+      K[USDC Token]
+      J --> K
+    end
     A <--> G
+    I <--> J
 ```
 
 ---
@@ -98,19 +152,19 @@ flutter run -d chrome # ou -d ios/android selon la plateforme
 
 ---
 
-## Intégration Circle CCTP
-- Voir `/contract/cctp_circle_service.js` pour le service Node.js
-- Voir `/contract/cctp_flow.md` pour la doc complète du flux CCTP
-- Utilisez la sandbox Circle pour tous les tests
-- Ne jamais exposer la clé API côté client
+## Smart Contracts
+- Voir `/contract/Invoice.sol` pour le contrat principal de gestion des factures USDC
+- Voir `/contract/deploy/` pour les scripts de déploiement
+- Le contrat gère la création, le paiement et le suivi des factures on-chain
+- Utilise l'interface ERC20 pour les transferts USDC
 
 ---
 
 ## Structure du dossier `contract/`
-- `Invoice.sol` : exemple de smart contract de facturation USDC (optionnel)
-- `cctp_circle_service.js` : service Node.js pour Circle CCTP
-- `cctp_flow.md` : documentation flux CCTP
-- `deploy/`, `test/` : scripts de déploiement/tests (à compléter)
+- `Invoice.sol` : smart contract principal de facturation USDC
+- `web3_service.js` : service Node.js pour interagir avec les contrats
+- `deploy/` : scripts de déploiement des contrats (Hardhat/Truffle)
+- `test/` : tests unitaires des contrats
 
 ---
 
@@ -123,16 +177,17 @@ flutter run -d chrome # ou -d ios/android selon la plateforme
 ---
 
 ## Roadmap / TODO
-- Ajout du paiement gasless (Circle Paymaster)
+- Interface de connexion wallet (MetaMask, WalletConnect)
 - Export PDF/partage QR code
-- Webhooks Circle pour monitoring automatique
+- Support multi-chain (Ethereum, Polygon, Arbitrum)
 - UI/UX avancée (dark mode, notifications…)
 - Déploiement cloud (Heroku, Vercel, etc.)
 
 ---
 
 ## Liens utiles
-- [Doc Circle CCTP](https://developers.circle.com/docs/cctp)
+- [Documentation Solidity](https://docs.soliditylang.org/)
+- [OpenZeppelin Contracts](https://docs.openzeppelin.com/contracts/)
 - [Flutter](https://flutter.dev/)
 - [Node.js](https://nodejs.org/)
 
