@@ -177,11 +177,28 @@ flutter run -d chrome # ou -d ios/android selon la plateforme
 ---
 
 ## Roadmap / TODO
-- Interface de connexion wallet (MetaMask, WalletConnect)
-- Export PDF/partage QR code
-- Support multi-chain (Ethereum, Polygon, Arbitrum)
-- UI/UX avancée (dark mode, notifications…)
-- Déploiement cloud (Heroku, Vercel, etc.)
+- [x] Interface de connexion wallet (Reown AppKit / WalletConnect)
+- [x] Authentification sécurisée par portefeuille crypto
+- [ ] Export PDF/partage QR code
+- [ ] Support multi-chain (Ethereum, Polygon, Arbitrum)
+- [ ] UI/UX avancée (dark mode, notifications…)
+- [ ] Déploiement cloud (Heroku, Vercel, etc.)
+
+## Nouveautés - Connexion Portefeuille
+
+### 🔐 Authentification par Portefeuille Crypto
+- **Reown AppKit** : Connexion sécurisée avec plus de 200 portefeuilles
+- **MetaMask** : Support natif pour l'extension navigateur
+- **WalletConnect** : Connexion mobile avec QR code
+- **Coinbase Wallet** : Intégration directe
+
+### 🛠️ Configuration Reown AppKit
+1. Créez un compte sur [Reown Cloud](https://cloud.reown.com/)
+2. Obtenez votre Project ID
+3. Configurez `lib/services/app_config.dart`
+4. Lancez l'application
+
+Voir [REOWN_INTEGRATION.md](REOWN_INTEGRATION.md) pour plus de détails.
 
 ---
 
