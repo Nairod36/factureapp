@@ -1,30 +1,50 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:factureapp/main.dart';
+import 'package:factureapp/services/wallet_connect_interface.dart';
+import 'package:factureapp/services/wallet_connect_mock_service.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('WalletConnect Mock Service Tests', () {
+    late WalletConnectServiceInterface walletService;
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    setUp(() {
+      walletService = WalletConnectMockService();
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('Service initializes correctly', () async {
+      expect(walletService.isInitialized, isFalse);
+      
+      await walletService.initialize();
+      
+      expect(walletService.isInitialized, isTrue);
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('Service can connect and disconnect', () async {
+      await walletService.initialize();
+      
+      expect(walletService.isConnected, isFalse);
+      expect(walletService.isConnecting, isFalse);
+      
+      final uri = await walletService.connect();
+      
+      expect(uri, isNotNull);
+      expect(walletService.isConnecting, isTrue);
+      expect(walletService.connectionUri, isNotNull);
+      
+      // Simulate connection completion
+      await Future.delayed(Duration(milliseconds: 100));
+      
+      await walletService.disconnect();
+      
+      expect(walletService.isConnected, isFalse);
+    });
+
+    test('Service provides mock address when connected', () async {
+      await walletService.initialize();
+      await walletService.connect();
+      
+      // In mock service, address is set after connection
+      expect(walletService.currentAddress, isNotNull);
+    });
   });
 }

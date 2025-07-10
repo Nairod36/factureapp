@@ -1,0 +1,587 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:wallet_connect_v2/wallet_connect_v2.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:convert';
+import 'wallet_connect_interface.dart';
+
+class WalletConnectService extends WalletConnectServiceInterface {
+  // Configuration WalletConnect
+  static const String projectId = 'bc8ad26e62a5e82e7da93ca5e3dade88';
+  static const String appName = 'Facture USDC';
+  static const String appDescription = 'Application de facturation en USDC';
+  static const String appUrl = 'https://factureusdc.com';
+  static const String appIcon = 'https://files.gitbook.com/v0/b/gitbook-legacy-files/o/spaces%2F-LJJeCjcLrr53DcT1Ml7%2Favatar.png?alt=media';
+  
+  // Configuration réseau (Sepolia testnet)
+  static const String chainId = 'eip155:11155111';
+  static const String rpcUrl = 'https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161';
+  static const String networkName = 'Sepolia';
+  
+  final WalletConnectV2 _walletConnectV2Plugin = WalletConnectV2();
+  final AppMetadata _appMetadata = AppMetadata(
+    name: appName,
+    description: appDescription,
+    url: appUrl,
+    icons: [appIcon],
+  );
+  
+  final List<Session> _sessions = [];
+  String? _currentAddress;
+  String? _dappTopic;
+  String? _tempDappTopic;
+  String? _connectionUri;
+  bool _isLoading = false;
+  bool _isInitialized = false;
+  final bool _isForeground = true;
+  
+  // Getters
+  bool get isConnected => _currentAddress != null && _dappTopic != null;
+  bool get isConnecting => _isLoading || (_tempDappTopic != null && _connectionUri != null);
+  String? get currentAddress => _currentAddress;
+  String? get connectionUri => _connectionUri;
+  bool get isInitialized => _isInitialized;
+  List<Session> get sessions => _sessions;
+  
+  // Initialisation du service
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+    
+    try {
+      debugPrint('Initialisation de WalletConnect...');
+      
+      // Vérifier si la plateforme est supportée
+      if (!_isPlatformSupported()) {
+        debugPrint('Plateforme non supportée pour WalletConnect - utilisation du mode dégradé');
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      }
+      
+      // Configuration des événements selon l'exemple officiel
+      _walletConnectV2Plugin.onConnectionStatus = (bool isConnected) async {
+        debugPrint('Statut de connexion: $isConnected');
+        if (_isInitialized) {
+          if (!isConnected && _isForeground) {
+            try {
+              await _walletConnectV2Plugin.connect();
+            } catch (e) {
+              debugPrint('Erreur lors de la reconnexion: $e');
+            }
+          }
+        } else {
+          if (isConnected) {
+            _isLoading = false;
+            _isInitialized = true;
+            await _refreshSessions();
+            notifyListeners();
+          } else {
+            _isLoading = false;
+            notifyListeners();
+          }
+        }
+      };
+      
+      _walletConnectV2Plugin.onSessionProposal = (SessionProposal proposal) async {
+        _isLoading = false;
+        notifyListeners();
+        
+        // Vérifier que c'est bien Ethereum
+        if (proposal.namespaces?.length != 1 ||
+            proposal.namespaces?.containsKey('eip155') != true ||
+            proposal.namespaces?['eip155']?.chains == null) {
+          await _walletConnectV2Plugin.rejectSession(proposalId: proposal.id);
+          return;
+        }
+        
+        // Auto-approuver la session pour Ethereum
+        try {
+          final requiredMethods = proposal.namespaces?['eip155']?.methods ?? <String>[];
+          final requiredEvents = proposal.namespaces?['eip155']?.events ?? <String>[];
+          final optionalMethods = proposal.optionalNamespaces?['eip155']?.methods ?? <String>[];
+          final optionalEvents = proposal.optionalNamespaces?['eip155']?.events ?? <String>[];
+          
+          final List<String> chainList = [];
+          chainList.addAll(proposal.namespaces?['eip155']?.chains ?? []);
+          chainList.addAll(proposal.optionalNamespaces?['eip155']?.chains ?? []);
+          final chainIDs = chainList.toSet().toList();
+          
+          final approval = SessionApproval(
+            id: proposal.id,
+            namespaces: {
+              'eip155': SessionNamespace(
+                accounts: chainIDs.map((e) => '$e:${_currentAddress ?? '0x0000000000000000000000000000000000000000'}').toList(),
+                methods: requiredMethods.isNotEmpty
+                    ? <String>{...requiredMethods, ...optionalMethods}.toList()
+                    : [],
+                events: requiredEvents.isNotEmpty
+                    ? <String>{...requiredEvents, ...optionalEvents}.toList()
+                    : [],
+              ),
+            },
+          );
+          
+          await _walletConnectV2Plugin.approveSession(approval: approval);
+        } catch (e) {
+          debugPrint('Erreur lors de l\'approbation: $e');
+          await _walletConnectV2Plugin.rejectSession(proposalId: proposal.id);
+        }
+      };
+      
+      _walletConnectV2Plugin.onSessionSettle = (Session session) async {
+        await _refreshSessions();
+        if (_tempDappTopic == null) return;
+        _dappTopic = session.topic;
+        _tempDappTopic = null;
+        _connectionUri = null;
+        await _setDappTopic(_dappTopic!);
+        
+        // Extraire l'adresse de la session
+        final accounts = session.namespaces['eip155']?.accounts ?? [];
+        if (accounts.isNotEmpty) {
+          _currentAddress = accounts.first.split(':').last;
+        }
+        
+        notifyListeners();
+      };
+      
+      _walletConnectV2Plugin.onSessionRejection = (String topic) async {
+        await _refreshSessions();
+        if (_tempDappTopic == topic) {
+          _tempDappTopic = null;
+          _connectionUri = null;
+        }
+        notifyListeners();
+      };
+      
+      _walletConnectV2Plugin.onSessionResponse = (SessionResponse response) async {
+        debugPrint('Réponse de session: ${response.results}');
+        // Traiter la réponse selon le besoin
+      };
+      
+      _walletConnectV2Plugin.onSessionUpdate = (String topic) {
+        _refreshSessions();
+      };
+      
+      _walletConnectV2Plugin.onSessionDelete = (String topic) {
+        _refreshSessions();
+      };
+      
+      _walletConnectV2Plugin.onEventError = (String code, String message) {
+        debugPrint('Erreur d\'événement: $code - $message');
+      };
+      
+      _walletConnectV2Plugin.onSessionRequest = (SessionRequest request) async {
+        debugPrint('Requête de session: ${request.method}');
+        // Pour l'instant, on rejette toutes les requêtes car nous sommes côté DApp
+        await _walletConnectV2Plugin.rejectRequest(
+          topic: request.topic,
+          requestId: request.id,
+        );
+      };
+      
+      // Initialiser le plugin avec gestion d'erreur renforcée
+      try {
+        await _walletConnectV2Plugin.init(
+          projectId: projectId,
+          appMetadata: _appMetadata,
+        );
+        
+        // Se connecter
+        await _walletConnectV2Plugin.connect();
+        
+        // Charger les sessions sauvegardées
+        await _loadSavedSession();
+        
+        debugPrint('WalletConnect initialisé avec succès');
+      } on MissingPluginException catch (e) {
+        debugPrint('Plugin WalletConnect manquant: $e');
+        // Marquer comme initialisé en mode dégradé
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      } on PlatformException catch (e) {
+        debugPrint('Erreur PlatformException lors de l\'initialisation: $e');
+        // Marquer comme initialisé en mode dégradé
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      } catch (e) {
+        debugPrint('Erreur lors de l\'initialisation du plugin: $e');
+        // Marquer comme initialisé en mode dégradé
+        _isInitialized = true;
+        notifyListeners();
+        return;
+      }
+      
+    } catch (e) {
+      debugPrint('Erreur lors de l\'initialisation WalletConnect: $e');
+      // En cas d'erreur, marquer comme initialisé en mode dégradé
+      _isInitialized = true;
+      notifyListeners();
+    }
+  }
+  
+  // Vérifier si la plateforme est supportée
+  bool _isPlatformSupported() {
+    if (kIsWeb) {
+      debugPrint('WalletConnect: Web non supporté directement');
+      return false;
+    }
+    
+    // Vérifier si on est en développement
+    if (kDebugMode) {
+      debugPrint('WalletConnect: Mode développement - accepter toutes les plateformes');
+      return true;
+    }
+    
+    // Pour les autres plateformes (iOS, Android, etc.)
+    return true;
+  }
+  
+  // Connexion au portefeuille
+  Future<String?> connect() async {
+    if (_isLoading) {
+      debugPrint('Connexion déjà en cours...');
+      return null;
+    }
+    
+    if (!_isInitialized) {
+      debugPrint('Service non initialisé, tentative d\'initialisation...');
+      await initialize();
+      if (!_isInitialized) {
+        debugPrint('Impossible d\'initialiser le service');
+        return null;
+      }
+    }
+    
+    try {
+      _isLoading = true;
+      notifyListeners();
+      
+      // Vérifier si la plateforme supporte WalletConnect
+      if (!_isPlatformSupported()) {
+        debugPrint('Plateforme non supportée - génération d\'URI de test');
+        if (kDebugMode) {
+          final mockUri = 'wc:mock-connection-uri@1?bridge=https://bridge.walletconnect.org&key=test';
+          _connectionUri = mockUri;
+          debugPrint('URI de test générée: $mockUri');
+          notifyListeners();
+          return mockUri;
+        }
+        return null;
+      }
+      
+      // Créer une paire selon l'exemple officiel
+      final uri = await _walletConnectV2Plugin.createPair(namespaces: {
+        'eip155': ProposalNamespace(
+          chains: [chainId],
+          methods: [
+            'eth_sendTransaction',
+            'eth_signTransaction',
+            'personal_sign',
+            'eth_signTypedData',
+            'eth_sign',
+          ],
+          events: ['chainChanged', 'accountsChanged'],
+        ),
+      });
+      
+      if (uri != null) {
+        _connectionUri = uri;
+        _tempDappTopic = uri.split('@')[0].split(':')[1];
+        debugPrint('URI de connexion: $uri');
+        notifyListeners();
+        return uri;
+      }
+      
+      debugPrint('Aucune URI de connexion générée');
+      return null;
+    } on MissingPluginException catch (e) {
+      debugPrint('Plugin WalletConnect manquant lors de la connexion: $e');
+      // En cas d'erreur, générer un URI de test pour les développeurs
+      if (kDebugMode) {
+        final mockUri = 'wc:mock-connection-uri@1?bridge=https://bridge.walletconnect.org&key=test';
+        _connectionUri = mockUri;
+        debugPrint('URI de test générée: $mockUri');
+        notifyListeners();
+        return mockUri;
+      }
+      return null;
+    } on PlatformException catch (e) {
+      debugPrint('Erreur de plateforme lors de la connexion: $e');
+      // En cas d'erreur, générer un URI de test pour les développeurs
+      if (kDebugMode) {
+        final mockUri = 'wc:mock-connection-uri@1?bridge=https://bridge.walletconnect.org&key=test';
+        _connectionUri = mockUri;
+        debugPrint('URI de test générée: $mockUri');
+        notifyListeners();
+        return mockUri;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Erreur lors de la connexion: $e');
+      // En cas d'erreur, générer un URI de test pour les développeurs
+      if (kDebugMode) {
+        final mockUri = 'wc:mock-connection-uri@1?bridge=https://bridge.walletconnect.org&key=test';
+        _connectionUri = mockUri;
+        debugPrint('URI de test générée: $mockUri');
+        notifyListeners();
+        return mockUri;
+      }
+      return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+  
+  // Lancer l'application du portefeuille
+  Future<void> launchWalletApp([String? walletScheme]) async {
+    if (_connectionUri == null) return;
+    
+    try {
+      String scheme = walletScheme ?? 'metamask';
+      String uri;
+      
+      if (scheme == 'metamask') {
+        uri = 'metamask://wc?uri=${Uri.encodeComponent(_connectionUri!)}';
+      } else if (scheme == 'trust') {
+        uri = 'trust://wc?uri=${Uri.encodeComponent(_connectionUri!)}';
+      } else {
+        uri = _connectionUri!;
+      }
+      
+      final uriToLaunch = Uri.parse(uri);
+      
+      if (await canLaunchUrl(uriToLaunch)) {
+        await launchUrl(uriToLaunch, mode: LaunchMode.externalApplication);
+      } else {
+        debugPrint('Impossible de lancer l\'application: $uri');
+      }
+    } catch (e) {
+      debugPrint('Erreur lors du lancement de l\'app: $e');
+    }
+  }
+  
+  // Déconnexion
+  Future<void> disconnect() async {
+    try {
+      if (_dappTopic != null) {
+        await _walletConnectV2Plugin.disconnectSession(topic: _dappTopic!);
+      }
+      
+      await _clearSession();
+      _resetState();
+      
+      debugPrint('Déconnexion réussie');
+    } catch (e) {
+      debugPrint('Erreur lors de la déconnexion: $e');
+    }
+  }
+  
+  // Envoyer une requête de signature
+  Future<void> sendPersonalSignRequest(String message) async {
+    if (!isConnected || _dappTopic == null || _currentAddress == null) return;
+    
+    try {
+      final session = _sessions.firstWhere((element) => element.topic == _dappTopic!);
+      await _walletConnectV2Plugin.sendRequest(
+        request: Request(
+          method: 'personal_sign',
+          chainId: chainId,
+          topic: _dappTopic!,
+          params: [message, _currentAddress!],
+        ),
+      );
+      
+      // Lancer l'application du portefeuille
+      final redirect = session.peer.redirect;
+      if (redirect != null) {
+        await _launchWalletFromRedirect(redirect);
+      }
+    } catch (e) {
+      debugPrint('Erreur lors de la signature: $e');
+    }
+  }
+  
+  // Envoyer une transaction
+  Future<void> sendTransaction({
+    required String to,
+    required String value,
+    String? data,
+    String? gasLimit,
+    String? gasPrice,
+  }) async {
+    if (!isConnected || _dappTopic == null || _currentAddress == null) return;
+    
+    try {
+      final session = _sessions.firstWhere((element) => element.topic == _dappTopic!);
+      await _walletConnectV2Plugin.sendRequest(
+        request: Request(
+          method: 'eth_sendTransaction',
+          chainId: chainId,
+          topic: _dappTopic!,
+          params: [
+            {
+              'from': _currentAddress!,
+              'to': to,
+              'value': value,
+              'data': data ?? '0x',
+              'gasLimit': gasLimit,
+              'gasPrice': gasPrice,
+            },
+          ],
+        ),
+      );
+      
+      // Lancer l'application du portefeuille
+      final redirect = session.peer.redirect;
+      if (redirect != null) {
+        await _launchWalletFromRedirect(redirect);
+      }
+    } catch (e) {
+      debugPrint('Erreur lors de l\'envoi de transaction: $e');
+    }
+  }
+  
+  // Obtenir le solde ETH
+  Future<double> getEthBalance() async {
+    if (!isConnected || _currentAddress == null) return 0.0;
+    
+    try {
+      final response = await http.post(
+        Uri.parse(rpcUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'eth_getBalance',
+          'params': [_currentAddress!, 'latest'],
+          'id': 1,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final balanceHex = data['result'];
+        final balanceWei = BigInt.parse(balanceHex.substring(2), radix: 16);
+        return balanceWei.toDouble() / 1e18;
+      }
+    } catch (e) {
+      debugPrint('Erreur lors de la récupération du solde: $e');
+    }
+    
+    return 0.0;
+  }
+  
+  // Vérifier la connexion réseau
+  Future<bool> isOnCorrectNetwork() async {
+    if (!isConnected) return false;
+    
+    try {
+      final session = _sessions.firstWhere((element) => element.topic == _dappTopic!);
+      final accounts = session.namespaces['eip155']?.accounts ?? [];
+      return accounts.any((account) => account.startsWith(chainId));
+    } catch (e) {
+      debugPrint('Erreur lors de la vérification du réseau: $e');
+      return false;
+    }
+  }
+  
+  // Méthodes utilitaires basées sur l'exemple officiel
+  Future<void> _refreshSessions() async {
+    try {
+      final sessions = await _walletConnectV2Plugin.getActivatedSessions();
+      if (sessions.where((element) => element.topic == _dappTopic).toList().isEmpty) {
+        await _setDappTopic(_dappTopic = null);
+      }
+      _sessions.clear();
+      _sessions.addAll(sessions);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Erreur lors du rafraîchissement des sessions: $e');
+      // En cas d'erreur, on continue sans faire planter l'app
+      notifyListeners();
+    }
+  }
+  
+  Future<void> _setDappTopic(String? topic) async {
+    final sp = await SharedPreferences.getInstance();
+    if (topic != null) {
+      await sp.setString('dapp_topic', topic);
+    } else {
+      await sp.remove('dapp_topic');
+    }
+  }
+  
+  Future<void> _loadSavedSession() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      _dappTopic = sp.getString('dapp_topic');
+      if (_dappTopic != null) {
+        await _refreshSessions();
+      }
+    } catch (e) {
+      debugPrint('Erreur lors du chargement de la session: $e');
+    }
+  }
+  
+  Future<void> _clearSession() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.remove('dapp_topic');
+    } catch (e) {
+      debugPrint('Erreur lors de la suppression de la session: $e');
+    }
+  }
+  
+  Future<void> _launchWalletFromRedirect(String redirect) async {
+    try {
+      await Future.delayed(const Duration(milliseconds: 500));
+      final uri = Uri.parse(redirect.contains(':') ? redirect : '$redirect:');
+      
+      if (redirect.startsWith('http')) {
+        await _launchUniversalLink(uri);
+      } else {
+        await launchUrl(uri);
+      }
+    } catch (e) {
+      debugPrint('Erreur lors du lancement: $e');
+    }
+  }
+  
+  Future<void> _launchUniversalLink(Uri url) async {
+    try {
+      final bool nativeAppLaunchSucceeded = await launchUrl(
+        url,
+        mode: LaunchMode.externalNonBrowserApplication,
+      );
+      if (!nativeAppLaunchSucceeded) {
+        await launchUrl(
+          url,
+          mode: LaunchMode.inAppWebView,
+        );
+      }
+    } catch (e) {
+      debugPrint('Erreur lors du lancement du lien universel: $e');
+    }
+  }
+  
+  void _resetState() {
+    _currentAddress = null;
+    _dappTopic = null;
+    _tempDappTopic = null;
+    _connectionUri = null;
+    _isLoading = false;
+    _sessions.clear();
+    notifyListeners();
+  }
+  
+  @override
+  void dispose() {
+    _walletConnectV2Plugin.dispose();
+    super.dispose();
+  }
+}
