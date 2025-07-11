@@ -9,6 +9,9 @@ class AppConfig {
   static String? userName;
   static bool isAuthenticated = false;
   
+  // Adresse de test avec des données
+  static const String testAddressWithData = '0x368A8eB0f28766a13fB803E0777eb68A25a2080d';
+  
   // Configuration réseau
   static const String networkName = 'Sepolia Testnet';
   static const String networkRpcUrl = 'https://rpc.ankr.com/eth_sepolia';

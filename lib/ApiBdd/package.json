@@ -12,16 +12,24 @@
     "poststart": "node -e \"console.log('✅ Serveur démarré avec succès!')\""
   },
   "dependencies": {
+    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
+    "ethers": "^6.7.1",
     "express": "^4.18.2",
     "morgan": "^1.10.0",
-    "ethers": "^6.7.1"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
-  "keywords": ["ethereum", "usdc", "invoices", "api", "smart-contracts"],
+  "keywords": [
+    "ethereum",
+    "usdc",
+    "invoices",
+    "api",
+    "smart-contracts"
+  ],
   "author": "Votre nom",
   "license": "MIT"
 }

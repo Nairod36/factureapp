@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../services/app_config.dart';
+import 'package:provider/provider.dart';
+import '../services/api_service.dart';
+import '../models/user.dart';
+import '../models/invoice.dart';
 import 'invoice_list_screen.dart';
 import 'profile_screen.dart';
-import 'transaction_history_screen.dart';
-import 'pay_invoice_search_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  final String userAddress;
+  final User user;
 
-  const HomeScreen({Key? key, required this.userAddress}) : super(key: key);
+  const HomeScreen({Key? key, required this.user}) : super(key: key);
 
   @override
   _HomeScreenState createState() => _HomeScreenState();
@@ -18,70 +17,64 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? _stats;
+  List<Invoice> _recentInvoices = [];
   bool _isLoading = true;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    _loadData();
   }
 
-  Future<void> _loadStats() async {
+  Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      // Charger les statistiques (simulation)
-      await Future.delayed(const Duration(seconds: 1));
-      
-      // En production, faire des appels API réels
-      final response = await http.get(
-        Uri.parse('${AppConfig.apiBaseUrl}/api/invoice/merchant/${widget.userAddress}'),
-        headers: {'Content-Type': 'application/json'},
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final invoices = List<Map<String, dynamic>>.from(data['invoices'] ?? []);
-        
-        // Calculer les statistiques
-        int totalInvoices = invoices.length;
-        int paidInvoices = invoices.where((inv) => inv['payee'] == true).length;
-        int pendingInvoices = totalInvoices - paidInvoices;
-        double totalAmount = invoices.fold(0.0, (sum, inv) => sum + double.parse(inv['montant'] ?? '0'));
-        double paidAmount = invoices
-            .where((inv) => inv['payee'] == true)
-            .fold(0.0, (sum, inv) => sum + double.parse(inv['montant'] ?? '0'));
-
-        setState(() {
-          _stats = {
-            'totalInvoices': totalInvoices,
-            'paidInvoices': paidInvoices,
-            'pendingInvoices': pendingInvoices,
-            'totalAmount': totalAmount,
-            'paidAmount': paidAmount,
-            'pendingAmount': totalAmount - paidAmount,
-          };
-        });
-      } else {
-        // Statistiques par défaut si pas de connexion
-        setState(() {
-          _stats = {
-            'totalInvoices': 0,
-            'paidInvoices': 0,
-            'pendingInvoices': 0,
-            'totalAmount': 0.0,
-            'paidAmount': 0.0,
-            'pendingAmount': 0.0,
-          };
-        });
-      }
+      await Future.wait([
+        _loadStats(),
+        _loadRecentInvoices(),
+      ]);
     } catch (e) {
       setState(() {
         _errorMessage = 'Erreur de chargement: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadStats() async {
+    try {
+      // Charger les factures du marchand pour calculer les statistiques
+      final invoices = await ApiService.getInvoicesByMerchant(widget.user.identifier);
+      
+      int totalInvoices = invoices.length;
+      int paidInvoices = invoices.where((inv) => inv.isPaid).length;
+      int pendingInvoices = totalInvoices - paidInvoices;
+      double totalAmount = invoices.fold(0.0, (sum, inv) => sum + inv.amount);
+      double paidAmount = invoices
+          .where((inv) => inv.isPaid)
+          .fold(0.0, (sum, inv) => sum + inv.amount);
+
+      setState(() {
+        _stats = {
+          'totalInvoices': totalInvoices,
+          'paidInvoices': paidInvoices,
+          'pendingInvoices': pendingInvoices,
+          'totalAmount': totalAmount,
+          'paidAmount': paidAmount,
+          'pendingAmount': totalAmount - paidAmount,
+        };
+      });
+    } catch (e) {
+      // Statistiques par défaut en cas d'erreur
+      setState(() {
         _stats = {
           'totalInvoices': 0,
           'paidInvoices': 0,
@@ -91,55 +84,89 @@ class _HomeScreenState extends State<HomeScreen> {
           'pendingAmount': 0.0,
         };
       });
-    } finally {
+    }
+  }
+
+  Future<void> _loadRecentInvoices() async {
+    try {
+      final invoices = await ApiService.getInvoicesByMerchant(widget.user.identifier);
+      // Prendre les 5 dernières factures
+      final recent = invoices.take(5).toList();
       setState(() {
-        _isLoading = false;
+        _recentInvoices = recent;
+      });
+    } catch (e) {
+      setState(() {
+        _recentInvoices = [];
       });
     }
+  }
+
+  void _logout() {
+    Provider.of<UserState>(context, listen: false).logout();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Accueil - ${AppConfig.appName}'),
+        title: const Text('Tableau de bord'),
         actions: [
           IconButton(
             icon: const Icon(Icons.person),
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => ProfileScreen(userAddress: widget.userAddress),
+                builder: (context) => ProfileScreen(user: widget.user),
               ),
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
           ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadStats,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // En-tête de bienvenue
-              _buildWelcomeCard(),
-              const SizedBox(height: 20),
-              
-              // Statistiques
-              _buildStatsSection(),
-              const SizedBox(height: 20),
-              
-              // Actions rapides
-              _buildQuickActions(),
-              const SizedBox(height: 20),
-              
-              // Activité récente
-              _buildRecentActivity(),
-            ],
-          ),
-        ),
+        onRefresh: _loadData,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _errorMessage != null
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.error, size: 64, color: Colors.red[300]),
+                        const SizedBox(height: 16),
+                        Text(
+                          _errorMessage!,
+                          style: const TextStyle(fontSize: 16),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _loadData,
+                          child: const Text('Réessayer'),
+                        ),
+                      ],
+                    ),
+                  )
+                : SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildWelcomeCard(),
+                        const SizedBox(height: 20),
+                        _buildStatsSection(),
+                        const SizedBox(height: 20),
+                        _buildQuickActions(),
+                        const SizedBox(height: 20),
+                        _buildRecentActivity(),
+                      ],
+                    ),
+                  ),
       ),
     );
   }
@@ -150,7 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.blue.shade400, Colors.blue.shade600],
+          colors: [Colors.blue[600]!, Colors.blue[400]!],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -159,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
           BoxShadow(
             color: Colors.blue.withOpacity(0.3),
             blurRadius: 10,
-            offset: const Offset(0, 5),
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -167,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Bonjour ${AppConfig.userName ?? "Utilisateur"} 👋',
+            'Bonjour ${widget.user.displayName} 👋',
             style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -176,18 +203,19 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Wallet: ${AppConfig.formatAddress(widget.userAddress)}',
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.white70,
+            'Bienvenue sur votre tableau de bord',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.white.withOpacity(0.9),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Text(
-            'Réseau: ${AppConfig.networkName}',
-            style: const TextStyle(
+            'ID: ${widget.user.identifier}',
+            style: TextStyle(
               fontSize: 14,
-              color: Colors.white70,
+              color: Colors.white.withOpacity(0.8),
+              fontFamily: 'monospace',
             ),
           ),
         ],
@@ -196,48 +224,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildStatsSection() {
-    if (_isLoading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(20.0),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-
-    if (_errorMessage != null) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.red.shade50,
-          border: Border.all(color: Colors.red),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          _errorMessage!,
-          style: TextStyle(color: Colors.red.shade700),
-        ),
-      );
+    if (_stats == null) {
+      return const SizedBox.shrink();
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Aperçu de vos factures',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+          'Statistiques',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: _buildStatCard(
                 'Total',
-                '${_stats!['totalInvoices']}',
-                'factures',
+                _stats!['totalInvoices'].toString(),
+                'Factures',
                 Icons.receipt_long,
                 Colors.blue,
               ),
@@ -246,8 +251,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _buildStatCard(
                 'Payées',
-                '${_stats!['paidInvoices']}',
-                'factures',
+                _stats!['paidInvoices'].toString(),
+                'Factures',
                 Icons.check_circle,
                 Colors.green,
               ),
@@ -260,8 +265,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: _buildStatCard(
                 'En attente',
-                '${_stats!['pendingInvoices']}',
-                'factures',
+                _stats!['pendingInvoices'].toString(),
+                'Factures',
                 Icons.pending,
                 Colors.orange,
               ),
@@ -269,11 +274,11 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: _buildStatCard(
-                'Revenus',
-                '${AppConfig.formatAmount(_stats!['paidAmount'])}',
+                'Total',
+                '${_stats!['totalAmount'].toStringAsFixed(2)}',
                 'USDC',
-                Icons.attach_money,
-                Colors.green,
+                Icons.account_balance_wallet,
+                Colors.purple,
               ),
             ),
           ],
@@ -288,11 +293,11 @@ class _HomeScreenState extends State<HomeScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: Colors.grey[300]!),
         boxShadow: [
           BoxShadow(
             color: Colors.grey.withOpacity(0.1),
-            blurRadius: 5,
+            blurRadius: 4,
             offset: const Offset(0, 2),
           ),
         ],
@@ -308,7 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 title,
                 style: TextStyle(
                   fontSize: 14,
-                  color: Colors.grey.shade600,
+                  color: Colors.grey[600],
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -317,17 +322,16 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
-              fontSize: 24,
+            style: const TextStyle(
+              fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: color,
             ),
           ),
           Text(
             subtitle,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.grey.shade500,
+              color: Colors.grey[500],
             ),
           ),
         ],
@@ -341,62 +345,67 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         const Text(
           'Actions rapides',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 16),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          childAspectRatio: 1.5,
+        const SizedBox(height: 12),
+        Row(
           children: [
-            _buildActionCard(
-              'Créer une facture',
-              Icons.add_circle,
-              Colors.blue,
-              () => Navigator.pushNamed(context, '/create-invoice', arguments: widget.userAddress),
+            Expanded(
+              child: _buildActionCard(
+                'Créer une facture',
+                Icons.add,
+                Colors.green,
+                () => Navigator.pushNamed(context, '/create-invoice', arguments: widget.user),
+              ),
             ),
-            _buildActionCard(
-              'Mes factures',
-              Icons.list_alt,
-              Colors.green,
-              () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => InvoiceListScreen(
-                    userAddress: widget.userAddress,
-                    userType: 'merchant',
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildActionCard(
+                'Mes factures',
+                Icons.list,
+                Colors.blue,
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => InvoiceListScreen(
+                      user: widget.user,
+                      userType: 'merchant',
+                    ),
                   ),
                 ),
               ),
             ),
-            _buildActionCard(
-              'Payer une facture',
-              Icons.payment,
-              Colors.orange,
-              () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PayInvoiceSearchScreen(
-                    userAddress: widget.userAddress,
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildActionCard(
+                'À payer',
+                Icons.payment,
+                Colors.orange,
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => InvoiceListScreen(
+                      user: widget.user,
+                      userType: 'client',
+                    ),
                   ),
                 ),
               ),
             ),
-            _buildActionCard(
-              'Historique',
-              Icons.history,
-              Colors.purple,
-              () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => TransactionHistoryScreen(
-                    userAddress: widget.userAddress,
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildActionCard(
+                'Mon profil',
+                Icons.person,
+                Colors.purple,
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileScreen(user: widget.user),
                   ),
                 ),
               ),
@@ -418,7 +427,6 @@ class _HomeScreenState extends State<HomeScreen> {
           border: Border.all(color: color.withOpacity(0.3)),
         ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, color: color, size: 32),
             const SizedBox(height: 8),
@@ -430,6 +438,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: color,
               ),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -446,17 +456,15 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const Text(
               'Activité récente',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             TextButton(
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => TransactionHistoryScreen(
-                    userAddress: widget.userAddress,
+                  builder: (context) => InvoiceListScreen(
+                    user: widget.user,
+                    userType: 'merchant',
                   ),
                 ),
               ),
@@ -464,24 +472,126 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
+        const SizedBox(height: 12),
+        if (_recentInvoices.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey[300]!),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.receipt_long, size: 48, color: Colors.grey[400]),
+                const SizedBox(height: 12),
+                Text(
+                  'Aucune facture récente',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Commencez par créer votre première facture',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          ...(_recentInvoices.map((invoice) => _buildInvoiceCard(invoice)).toList()),
+      ],
+    );
+  }
+
+  Widget _buildInvoiceCard(Invoice invoice) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[300]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
-          child: const Center(
-            child: Text(
-              'Aucune activité récente',
-              style: TextStyle(
-                color: Colors.grey,
-                fontSize: 16,
-              ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: invoice.isPaid ? Colors.green[100] : Colors.orange[100],
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(
+              invoice.isPaid ? Icons.check_circle : Icons.pending,
+              color: invoice.isPaid ? Colors.green : Colors.orange,
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  invoice.shortId,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  invoice.description.isNotEmpty 
+                      ? invoice.description 
+                      : 'Facture',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                  ),
+                ),
+                Text(
+                  'Client: ${invoice.client}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                invoice.formattedAmount,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              Text(
+                invoice.statusText,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: invoice.isPaid ? Colors.green : Colors.orange,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
