@@ -4,7 +4,7 @@ class AppConfig {
   // Configuration API
   static const String apiBaseUrl = 'http://localhost:3000';
   
-  // Configuration utilisateur (à adapter selon l'authentification)
+  // Configuration utilisateur
   static String userAddress = '0x742d35Cc6635C0532925a3b8D56c9E6eA22D9c08';
   static String? userName;
   static bool isAuthenticated = false;

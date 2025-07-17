@@ -44,7 +44,6 @@ class MyApp extends StatelessWidget {
                 : const AuthScreen();
           },
         ),
-        // Utilisation d'un générateur de route personnalisé
         onGenerateRoute: (settings) {
           switch (settings.name) {
             case '/auth':
